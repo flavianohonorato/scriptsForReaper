@@ -72,6 +72,30 @@ This script selects the region at the current play position and sets it as the l
 
 - Requires SWS extension.
 
+### 5. createRegionsFromMarkers.lua
+
+This script converts all markers in the current REAPER project into regions. Each region starts at a marker and ends at the next marker. After creating the regions, the original markers are removed.
+
+### Usage
+
+1. Open REAPER and load your project.
+2. Run the `createRegionsFromMarkers.lua` script.
+
+### Example
+
+Suppose you have the following markers in your project:
+
+- Marker 1 at 10 seconds
+- Marker 2 at 20 seconds
+- Marker 3 at 30 seconds
+
+After running the script, the following regions will be created:
+
+- Region 1 from 10 to 20 seconds
+- Region 2 from 20 to 30 seconds
+
+The original markers will be removed.
+
 ## Installation
 
 1. Download the scripts from this repository.

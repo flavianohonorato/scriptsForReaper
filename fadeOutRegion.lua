@@ -15,8 +15,7 @@ local function findRegionAtPosition(position)
 
     for i = 0, numMarkers + numRegions - 1 do
         local _, isrgn, pos, rgnend, name, markrgnindexnumber = reaper.EnumProjectMarkers(i)
-        if isrgn and position >= pos and posit
-        ion <= rgnend then
+        if isrgn and position >= pos and position <= rgnend then
             return {
                 pos = pos,
                 rgnend = rgnend,

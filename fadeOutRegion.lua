@@ -1,5 +1,6 @@
 local END_REGION_NAME = "END"
 local FADE_DURATION_SECONDS = 5.0
+local END_THRESHOLD_SECONDS = 0.25
 
 local function setToggleState(isActive)
     local _, _, sectionId, commandId = reaper.get_action_context()
@@ -9,6 +10,16 @@ local function setToggleState(isActive)
 
     reaper.SetToggleCommandState(sectionId, commandId, isActive and 1 or 0)
     reaper.RefreshToolbar2(sectionId, commandId)
+end
+
+local function setFadeIndicator(isActive)
+    setToggleState(isActive)
+    if isActive then
+        reaper.ClearConsole()
+        reaper.ShowConsoleMsg("Fadeout ativo\n")
+    else
+        reaper.ClearConsole()
+    end
 end
 
 local function getActivePosition()
@@ -102,17 +113,18 @@ end
 
 local function startEndRegionMonitor(targetRegionEnd, endRegionStart, affectedItems)
     local lastPlayPos = reaper.GetPlayPosition()
-    local endThreshold = 0.01
     local function monitor()
         local playState = reaper.GetPlayState()
         if playState == 0 then
-            setToggleState(false)
+            setFadeIndicator(false)
             return
         end
 
         local playPos = reaper.GetPlayPosition()
-        local reachedEnd = playPos >= targetRegionEnd
-            or (playPos < lastPlayPos and lastPlayPos >= (targetRegionEnd - endThreshold))
+        local endCheck = targetRegionEnd
+
+        local reachedEnd = playPos >= endCheck
+            or (playPos < lastPlayPos and lastPlayPos >= (endCheck - END_THRESHOLD_SECONDS))
 
         if reachedEnd then
             if reaper.GetToggleCommandState(1068) == 1 then
@@ -120,9 +132,11 @@ local function startEndRegionMonitor(targetRegionEnd, endRegionStart, affectedIt
             end
             reaper.GetSet_LoopTimeRange(true, false, 0, 0, false)
             clearFadeOutOnItems(affectedItems)
-            setToggleState(false)
-            reaper.SetEditCurPos2(0, endRegionStart, true, true)
-            reaper.Main_OnCommand(1007, 0)
+            setFadeIndicator(false)
+            if endRegionStart then
+                reaper.SetEditCurPos2(0, endRegionStart, true, true)
+                reaper.Main_OnCommand(1007, 0)
+            end
             return
         end
 
@@ -134,11 +148,11 @@ local function startEndRegionMonitor(targetRegionEnd, endRegionStart, affectedIt
 end
 
 local function main()
-    setToggleState(true)
+    setFadeIndicator(true)
     local position = getActivePosition()
     local currentRegion = findRegionAtPosition(position)
     if not currentRegion then
-        setToggleState(false)
+        setFadeIndicator(false)
         reaper.MB("Nenhuma região encontrada na posição atual.", "Erro", 0)
         return
     end
@@ -155,7 +169,7 @@ local function main()
     if endRegion and endRegion.pos ~= currentRegion.pos then
         startEndRegionMonitor(currentRegion.rgnend, endRegion.pos, affectedItems)
     else
-        setToggleState(false)
+        startEndRegionMonitor(currentRegion.rgnend, nil, affectedItems)
     end
 end
 

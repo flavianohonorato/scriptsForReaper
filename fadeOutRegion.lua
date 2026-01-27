@@ -50,6 +50,7 @@ local function applyFadeOutToItemsInRegion(regionStart, regionEnd)
     local fadeStart = math.max(regionEnd - FADE_DURATION_SECONDS, regionStart)
     local totalTracks = reaper.CountTracks(0)
     local itemsAffected = 0
+    local affectedItems = {}
 
     for t = 0, totalTracks - 1 do
         local track = reaper.GetTrack(0, t)
@@ -73,15 +74,23 @@ local function applyFadeOutToItemsInRegion(regionStart, regionEnd)
                 if fadeLen > 0 then
                     reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fadeLen)
                     itemsAffected = itemsAffected + 1
+                    affectedItems[#affectedItems + 1] = item
                 end
             end
         end
     end
 
-    return itemsAffected
+    return itemsAffected, affectedItems
 end
 
-local function startEndRegionMonitor(targetRegionEnd, endRegionStart)
+local function clearFadeOutOnItems(items)
+    for i = 1, #items do
+        local item = items[i]
+        reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", 0.0)
+    end
+end
+
+local function startEndRegionMonitor(targetRegionEnd, endRegionStart, affectedItems)
     local function monitor()
         local playState = reaper.GetPlayState()
         if playState == 0 then
@@ -90,6 +99,11 @@ local function startEndRegionMonitor(targetRegionEnd, endRegionStart)
 
         local playPos = reaper.GetPlayPosition()
         if playPos >= targetRegionEnd then
+            if reaper.GetToggleCommandState(1068) == 1 then
+                reaper.Main_OnCommand(1068, 0)
+            end
+            reaper.GetSet_LoopTimeRange(true, false, 0, 0, false)
+            clearFadeOutOnItems(affectedItems)
             reaper.SetEditCurPos2(0, endRegionStart, true, true)
             reaper.Main_OnCommand(1007, 0)
             return
@@ -110,7 +124,7 @@ local function main()
     end
 
     reaper.Undo_BeginBlock()
-    local itemsAffected = applyFadeOutToItemsInRegion(currentRegion.pos, currentRegion.rgnend)
+    local itemsAffected, affectedItems = applyFadeOutToItemsInRegion(currentRegion.pos, currentRegion.rgnend)
     reaper.Undo_EndBlock("Fade out da região atual (itens)", -1)
 
     if itemsAffected == 0 then
@@ -119,7 +133,7 @@ local function main()
 
     local endRegion = findRegionByName(END_REGION_NAME)
     if endRegion and endRegion.pos ~= currentRegion.pos then
-        startEndRegionMonitor(currentRegion.rgnend, endRegion.pos)
+        startEndRegionMonitor(currentRegion.rgnend, endRegion.pos, affectedItems)
     end
 end
 

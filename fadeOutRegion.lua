@@ -46,16 +46,39 @@ local function findRegionByName(regionName)
     return nil
 end
 
-local function getMasterVolumeEnvelope()
-    local masterTrack = reaper.GetMasterTrack(0)
-    return reaper.GetTrackEnvelopeByName(masterTrack, "Volume")
-end
+local function applyFadeOutToItemsInRegion(regionStart, regionEnd)
+    local fadeStart = math.max(regionEnd - FADE_DURATION_SECONDS, regionStart)
+    local totalTracks = reaper.CountTracks(0)
+    local itemsAffected = 0
 
-local function applyFadeOut(envelope, startTime, endTime)
-    local value = select(1, reaper.Envelope_Evaluate(envelope, startTime, 0, 0))
-    reaper.InsertEnvelopePoint(envelope, startTime, value, 0, 0, false, true)
-    reaper.InsertEnvelopePoint(envelope, endTime, 0.0, 0, 0, false, true)
-    reaper.Envelope_SortPoints(envelope)
+    for t = 0, totalTracks - 1 do
+        local track = reaper.GetTrack(0, t)
+        local itemCount = reaper.CountTrackMediaItems(track)
+
+        for i = 0, itemCount - 1 do
+            local item = reaper.GetTrackMediaItem(track, i)
+            local itemStart = reaper.GetMediaItemInfo_Value(item, "D_POSITION")
+            local itemLen = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+            local itemEnd = itemStart + itemLen
+
+            if itemStart < regionEnd and itemEnd > regionEnd then
+                reaper.SplitMediaItem(item, regionEnd)
+                itemLen = reaper.GetMediaItemInfo_Value(item, "D_LENGTH")
+                itemEnd = itemStart + itemLen
+            end
+
+            if itemEnd > fadeStart and itemEnd <= regionEnd then
+                local available = itemEnd - fadeStart
+                local fadeLen = math.min(FADE_DURATION_SECONDS, available)
+                if fadeLen > 0 then
+                    reaper.SetMediaItemInfo_Value(item, "D_FADEOUTLEN", fadeLen)
+                    itemsAffected = itemsAffected + 1
+                end
+            end
+        end
+    end
+
+    return itemsAffected
 end
 
 local function startEndRegionMonitor(targetRegionEnd, endRegionStart)
@@ -86,17 +109,13 @@ local function main()
         return
     end
 
-    local envelope = getMasterVolumeEnvelope()
-    if not envelope then
-        reaper.MB("Envelope de volume do master não disponível.", "Erro", 0)
-        return
-    end
-
-    local fadeStart = math.max(currentRegion.rgnend - FADE_DURATION_SECONDS, currentRegion.pos)
-
     reaper.Undo_BeginBlock()
-    applyFadeOut(envelope, fadeStart, currentRegion.rgnend)
-    reaper.Undo_EndBlock("Fade out da região atual", -1)
+    local itemsAffected = applyFadeOutToItemsInRegion(currentRegion.pos, currentRegion.rgnend)
+    reaper.Undo_EndBlock("Fade out da região atual (itens)", -1)
+
+    if itemsAffected == 0 then
+        reaper.MB("Nenhum item encontrado para aplicar fade out.", "Aviso", 0)
+    end
 
     local endRegion = findRegionByName(END_REGION_NAME)
     if endRegion and endRegion.pos ~= currentRegion.pos then

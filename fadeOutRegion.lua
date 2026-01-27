@@ -111,6 +111,15 @@ local function clearFadeOutOnItems(items)
     end
 end
 
+local function disableLoopAndTimeSelection()
+    if reaper.GetToggleCommandState(1068) == 1 then
+        reaper.Main_OnCommand(1068, 0)
+    end
+
+    reaper.GetSet_LoopTimeRange(true, false, 0, 0, false)
+    reaper.Main_OnCommand(40635, 0)
+end
+
 local function startEndRegionMonitor(targetRegionEnd, endRegionStart, affectedItems)
     local lastPlayPos = reaper.GetPlayPosition()
     local function monitor()
@@ -127,15 +136,15 @@ local function startEndRegionMonitor(targetRegionEnd, endRegionStart, affectedIt
             or (playPos < lastPlayPos and lastPlayPos >= (endCheck - END_THRESHOLD_SECONDS))
 
         if reachedEnd then
-            if reaper.GetToggleCommandState(1068) == 1 then
-                reaper.Main_OnCommand(1068, 0)
-            end
-            reaper.GetSet_LoopTimeRange(true, false, 0, 0, false)
+            disableLoopAndTimeSelection()
             clearFadeOutOnItems(affectedItems)
             setFadeIndicator(false)
             if endRegionStart then
                 reaper.SetEditCurPos2(0, endRegionStart, true, true)
                 reaper.Main_OnCommand(1007, 0)
+            else
+                reaper.SetEditCurPos2(0, targetRegionEnd, true, false)
+                reaper.Main_OnCommand(1016, 0)
             end
             return
         end

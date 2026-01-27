@@ -1,6 +1,16 @@
 local END_REGION_NAME = "END"
 local FADE_DURATION_SECONDS = 5.0
 
+local function setToggleState(isActive)
+    local _, _, sectionId, commandId = reaper.get_action_context()
+    if commandId == 0 then
+        return
+    end
+
+    reaper.SetToggleCommandState(sectionId, commandId, isActive and 1 or 0)
+    reaper.RefreshToolbar2(sectionId, commandId)
+end
+
 local function getActivePosition()
     local playState = reaper.GetPlayState()
     if playState & 1 == 1 then
@@ -91,24 +101,32 @@ local function clearFadeOutOnItems(items)
 end
 
 local function startEndRegionMonitor(targetRegionEnd, endRegionStart, affectedItems)
+    local lastPlayPos = reaper.GetPlayPosition()
+    local endThreshold = 0.01
     local function monitor()
         local playState = reaper.GetPlayState()
         if playState == 0 then
+            setToggleState(false)
             return
         end
 
         local playPos = reaper.GetPlayPosition()
-        if playPos >= targetRegionEnd then
+        local reachedEnd = playPos >= targetRegionEnd
+            or (playPos < lastPlayPos and lastPlayPos >= (targetRegionEnd - endThreshold))
+
+        if reachedEnd then
             if reaper.GetToggleCommandState(1068) == 1 then
                 reaper.Main_OnCommand(1068, 0)
             end
             reaper.GetSet_LoopTimeRange(true, false, 0, 0, false)
             clearFadeOutOnItems(affectedItems)
+            setToggleState(false)
             reaper.SetEditCurPos2(0, endRegionStart, true, true)
             reaper.Main_OnCommand(1007, 0)
             return
         end
 
+        lastPlayPos = playPos
         reaper.defer(monitor)
     end
 
@@ -116,9 +134,11 @@ local function startEndRegionMonitor(targetRegionEnd, endRegionStart, affectedIt
 end
 
 local function main()
+    setToggleState(true)
     local position = getActivePosition()
     local currentRegion = findRegionAtPosition(position)
     if not currentRegion then
+        setToggleState(false)
         reaper.MB("Nenhuma região encontrada na posição atual.", "Erro", 0)
         return
     end
@@ -134,6 +154,8 @@ local function main()
     local endRegion = findRegionByName(END_REGION_NAME)
     if endRegion and endRegion.pos ~= currentRegion.pos then
         startEndRegionMonitor(currentRegion.rgnend, endRegion.pos, affectedItems)
+    else
+        setToggleState(false)
     end
 end
 

@@ -1,6 +1,16 @@
 local END_REGION_NAME = "END"
-local FADE_DURATION_SECONDS = 5.0
+local FADE_DURATION_SECONDS = 8.0
 local END_THRESHOLD_SECONDS = 0.25
+local END_MUTE_RELEASE_SECONDS = 0.08
+local END_STOP_EARLY_SECONDS = 0.03
+local END_CLEAR_FADE_DELAY_SECONDS = 0.12
+local END_CLEAR_FADE_AFTER_JUMP_SECONDS = 0.2
+local END_MUTE_RELEASE_AFTER_JUMP_SECONDS = 0.12
+local END_UNMUTE_PLAY_ADVANCE_SECONDS = 0.06
+local END_UNMUTE_FAILSAFE_SECONDS = 0.6
+local NOTICE_WINDOW_W = 420
+local NOTICE_WINDOW_H = 110
+local NOTICE_FONT_SIZE = 32
 
 local function setToggleState(isActive)
     local _, _, sectionId, commandId = reaper.get_action_context()
@@ -15,10 +25,17 @@ end
 local function setFadeIndicator(isActive)
     setToggleState(isActive)
     if isActive then
-        reaper.ClearConsole()
-        reaper.ShowConsoleMsg("Fadeout ativo\n")
+        gfx.init("Fadeout ativo", NOTICE_WINDOW_W, NOTICE_WINDOW_H, 0)
+        gfx.setfont(1, "Arial", NOTICE_FONT_SIZE)
+        gfx.set(1, 1, 1, 1)
+        gfx.x = 20
+        gfx.y = (NOTICE_WINDOW_H - NOTICE_FONT_SIZE) / 2
+        gfx.drawstr("FADEOUT ATIVO")
+        gfx.update()
     else
-        reaper.ClearConsole()
+        if gfx.getchar() >= 0 then
+            gfx.quit()
+        end
     end
 end
 
@@ -120,32 +137,118 @@ local function disableLoopAndTimeSelection()
     reaper.Main_OnCommand(40635, 0)
 end
 
-local function startEndRegionMonitor(targetRegionEnd, endRegionStart, affectedItems)
-    local lastPlayPos = reaper.GetPlayPosition()
-    local function monitor()
-        local playState = reaper.GetPlayState()
-        if playState == 0 then
-            setFadeIndicator(false)
+local function setMasterMute(isMuted)
+    local master = reaper.GetMasterTrack(0)
+    if master then
+        reaper.SetMediaTrackInfo_Value(master, "B_MUTE", isMuted and 1 or 0)
+    end
+end
+
+local function unmuteMasterLater(delaySeconds)
+    local startTime = reaper.time_precise()
+    local function wait()
+        if reaper.time_precise() - startTime >= delaySeconds then
+            setMasterMute(false)
             return
         end
+        reaper.defer(wait)
+    end
+    reaper.defer(wait)
+end
 
+local function startEndRegionMonitor(targetRegionEnd, endRegionStart, affectedItems)
+    local lastPlayPos = reaper.GetPlayPosition()
+    local didFinish = false
+
+    local function clearFadesWhenStopped(delaySeconds)
+        local startTime = reaper.time_precise()
+        local function wait()
+            if reaper.GetPlayState() == 0 and (reaper.time_precise() - startTime) >= delaySeconds then
+                clearFadeOutOnItems(affectedItems)
+                return
+            end
+            reaper.defer(wait)
+        end
+        reaper.defer(wait)
+    end
+
+    local function clearFadesAfterDelay(delaySeconds)
+        local startTime = reaper.time_precise()
+        local function wait()
+            if reaper.time_precise() - startTime >= delaySeconds then
+                clearFadeOutOnItems(affectedItems)
+                return
+            end
+            reaper.defer(wait)
+        end
+        reaper.defer(wait)
+    end
+
+    local function unmuteAndClearAfterJump(jumpStartPos)
+        local startTime = reaper.time_precise()
+        local function wait()
+            local playState = reaper.GetPlayState()
+            local playPos = reaper.GetPlayPosition()
+            if playState & 1 == 1 and playPos >= (jumpStartPos + END_UNMUTE_PLAY_ADVANCE_SECONDS) then
+                setMasterMute(false)
+                clearFadeOutOnItems(affectedItems)
+                return
+            end
+            if reaper.time_precise() - startTime >= END_UNMUTE_FAILSAFE_SECONDS then
+                setMasterMute(false)
+                clearFadeOutOnItems(affectedItems)
+                return
+            end
+            reaper.defer(wait)
+        end
+        reaper.defer(wait)
+    end
+
+    local function handleEnd()
+        if didFinish then
+            return
+        end
+        didFinish = true
+        setMasterMute(true)
+        disableLoopAndTimeSelection()
+        setFadeIndicator(false)
+        if endRegionStart then
+            reaper.SetEditCurPos2(0, endRegionStart, true, true)
+            reaper.Main_OnCommand(1007, 0)
+            -- Jump and keep playing; only unmute/clear after play advances a bit.
+            unmuteAndClearAfterJump(endRegionStart)
+        else
+            reaper.SetEditCurPos2(0, targetRegionEnd, true, false)
+            reaper.Main_OnCommand(1016, 0)
+            -- Clear fades after a short stopped delay to avoid the pop.
+            clearFadesWhenStopped(END_CLEAR_FADE_DELAY_SECONDS)
+            unmuteMasterLater(END_MUTE_RELEASE_SECONDS)
+        end
+    end
+
+    local function monitor()
+        local playState = reaper.GetPlayState()
         local playPos = reaper.GetPlayPosition()
         local endCheck = targetRegionEnd
 
+        local nearEnd = playPos >= endCheck
+            or lastPlayPos >= (endCheck - END_THRESHOLD_SECONDS)
+
+        if playState == 0 then
+            if nearEnd then
+                handleEnd()
+            else
+                setFadeIndicator(false)
+            end
+            return
+        end
+
+        local endEarly = (not endRegionStart) and playPos >= (endCheck - END_STOP_EARLY_SECONDS)
         local reachedEnd = playPos >= endCheck
             or (playPos < lastPlayPos and lastPlayPos >= (endCheck - END_THRESHOLD_SECONDS))
 
-        if reachedEnd then
-            disableLoopAndTimeSelection()
-            clearFadeOutOnItems(affectedItems)
-            setFadeIndicator(false)
-            if endRegionStart then
-                reaper.SetEditCurPos2(0, endRegionStart, true, true)
-                reaper.Main_OnCommand(1007, 0)
-            else
-                reaper.SetEditCurPos2(0, targetRegionEnd, true, false)
-                reaper.Main_OnCommand(1016, 0)
-            end
+        if endEarly or reachedEnd then
+            handleEnd()
             return
         end
 
